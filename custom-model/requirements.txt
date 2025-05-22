@@ -1,0 +1,4 @@
+requests_futures==1.0.0
+datarobot-mlops[kafka]
+category_encoders==2.6.0
+scikit-learn==1.6.1

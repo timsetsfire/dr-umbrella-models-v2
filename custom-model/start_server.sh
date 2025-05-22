@@ -1,0 +1,15 @@
+#!/bin/sh
+
+export MLOPS_KAFKA_REQUEST_TIMEOUT_MS=60000
+export MLOPS_KAFKA_BOOTSTRAP_SERVERS=""
+export MLOPS_KAFKA_SASL_MECHANISM="PLAIN"
+export MLOPS_KAFKA_TOPIC_NAME="topic-name"
+export MLOPS_KAFKA_SECURITY_PROTOCOL="SASL_SSL"
+export MLOPS_KAFKA_SASL_JAAS_CONFIG='jaas-config'
+export MLOPS_SPOOLER_TYPE="KAFKA"
+export MLOPS_KAFKA_SESSION_TIMEOUT_MS=30000
+export MLOPS_KAFKA_SASL_PASSWORD='password'
+export MLOPS_KAFKA_SASL_USERNAME='username'
+
+echo "starting drum server"
+exec drum server "$@"

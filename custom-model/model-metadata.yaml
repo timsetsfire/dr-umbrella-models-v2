@@ -1,0 +1,8 @@
+name: Rental Calc Master
+type: inference
+targetType: unstructured
+runtimeParameterDefinitions:
+  - fieldName: DATAROBOT_API_TOKEN
+    type: credential
+    credentialType: api_token
+    description: DataRobot API Token
