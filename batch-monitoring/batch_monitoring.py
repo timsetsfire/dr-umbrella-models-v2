@@ -8,6 +8,7 @@ import json
 import requests
 import sys
 import os
+import pandas as pd
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,12 +54,14 @@ def parse_args():
     )
     parser.add_argument('--deployment-conf', help='deployment configuration yaml.')
     parser.add_argument('--prediction-dataset', help='prediction dataset csv (includes predictions and inputs)')
+    parser.add_argument('--input-dataset', help='input dataset csv (includes features for the mondel)')
     return parser.parse_args()
 
 def main():
     args = parse_args()
     deployment_conf_path = args.deployment_conf
     prediction_dataset_path = args.prediction_dataset
+    input_dataset_path = Path(args.input_dataset)
     deployment_conf_path = Path(deployment_conf_path)
     prediction_dataset_path = Path(prediction_dataset_path)
     
@@ -66,6 +69,25 @@ def main():
         with open(deployment_conf_path, "r") as f:
             deployment_conf = yaml.load(f, Loader = yaml.SafeLoader)
         MONITOR = True
+        pred_df = pd.read_csv(str(prediction_dataset_path))
+        if input_dataset_path.exists():
+            input_df = pd.read_csv(str(input_dataset_path))
+            monitoring_df = pred_df.join(input_df)
+        else:
+            monitoring_df = pred_df.copy()
+            logger.warning(f"{str(input_dataset_path)} does NOT exist")
+            logger.warning(f"no feature drift will be monitoring for this run")
+        expected_pred_columns = [d["prediction_column"] for d in deployment_conf["deployments"]]
+        received_pred_columns = [ p for p in monitoring_df.columns if 'ADJ_PRED_RENTAL_DAYS_' in p]
+        num_missing = 0
+        invalid_pred_columns = []
+        for rpc in received_pred_columns:
+            if rpc.replace(".", "_") not in expected_pred_columns:
+                logging.error(f"after sanitizing column names, invalid column name observed: {rpc}")
+                invalid_pred_columns.append(rpc)
+                num_missing+=1
+        if num_missing > 0:
+            raise Exception(f"after sanitizing invalid prediction columns were observed: {invalid_pred_columns}.  Sanitization involves replace `.` with `_`.")           
     else:
         raise Exception("Deployment configuration or prediction dataset does not exist!! Monitoring not available")
         MONITOR = False
@@ -75,10 +97,12 @@ def main():
             logger.info("prediction dataset id present")
             purge_old_dataset_version(prediction_dataset_id)
             logger.info("registering new version")                        
-            prediction_dataset = dr.Dataset.create_version_from_file(prediction_dataset_id, str(prediction_dataset_path))
+            # prediction_dataset = dr.Dataset.create_version_from_file(prediction_dataset_id, str(prediction_dataset_path))
+            prediction_dataset = dr.Dataset.create_version_from_in_memory_data(prediction_dataset_id, monitoring_df)
         else:
             logger.info("register prediction dataset")
-            prediction_dataset = dr.Dataset.create_from_file(str(prediction_dataset_path), fname = f"Rental Calc Prediction Data")    
+            # prediction_dataset = dr.Dataset.create_from_file(str(prediction_dataset_path), fname = f"Rental Calc Prediction Data")    
+            prediction_dataset = dr.Dataset.create_from_in_memory_data(monitoring_df, fname = f"Rental Calc Prediction Data") 
             logger.info("recording prediction dataset id to deployment config")
             deployment_conf["prediction_dataset_id"] = prediction_dataset.id     
         
