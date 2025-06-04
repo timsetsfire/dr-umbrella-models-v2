@@ -61,7 +61,7 @@ def main():
     args = parse_args()
     deployment_conf_path = args.deployment_conf
     prediction_dataset_path = args.prediction_dataset
-    input_dataset_path = Path(args.input_dataset)
+    input_dataset_path = args.input_dataset
     deployment_conf_path = Path(deployment_conf_path)
     prediction_dataset_path = Path(prediction_dataset_path)
     
@@ -70,12 +70,13 @@ def main():
             deployment_conf = yaml.load(f, Loader = yaml.SafeLoader)
         MONITOR = True
         pred_df = pd.read_csv(str(prediction_dataset_path))
-        if input_dataset_path.exists():
+        if Path(input_dataset_path).exists():
+            logger.info(f"input dataset is available at {input_dataset_path}")
             input_df = pd.read_csv(str(input_dataset_path))
             monitoring_df = pred_df.join(input_df)
         else:
             monitoring_df = pred_df.copy()
-            logger.warning(f"{str(input_dataset_path)} does NOT exist")
+            logger.warning(f"{str(input_dataset_path)} does NOT exist or was not provided.")
             logger.warning(f"no feature drift will be monitoring for this run")
         expected_pred_columns = [d["prediction_column"] for d in deployment_conf["deployments"]]
         received_pred_columns = [ p for p in monitoring_df.columns if 'ADJ_PRED_RENTAL_DAYS_' in p]
@@ -89,8 +90,8 @@ def main():
         if num_missing > 0:
             raise Exception(f"after sanitizing invalid prediction columns were observed: {invalid_pred_columns}.  Sanitization involves replace `.` with `_`.")           
     else:
-        raise Exception("Deployment configuration or prediction dataset does not exist!! Monitoring not available")
         MONITOR = False
+        raise Exception("Deployment configuration or prediction dataset does not exist!! Monitoring not available")
 
     if MONITOR: 
         if prediction_dataset_id := deployment_conf.get("prediction_dataset_id"):
@@ -156,7 +157,11 @@ def main():
                 logger.info(job["logs"][-1])
             elif job["status"] in ["ABORTED", "FAILED"]:
                 logger.error( job["logs"][-1])
-                
+        logger.info("removing prediction dataset from disk")
+        Path(prediction_dataset_path).unlink()
+        if input_dataset_path:
+            logger.info("removing input dataset from disk")
+            Path(input_dataset_path).unlink()
         
     else:
         logger.info("monitoring was not enabled -> either missing deployment conf yaml or prediction datasets")
