@@ -103,11 +103,9 @@ def purge_old_dataset_version(dataset_id, limit=100):
             helper(next_url)
     helper(dataset_url)
 
-async def register_dataset(conf):
-    def _create(): 
+async def register_dataset(conf, training_dataset_id, training_dataset_path):
+    def _create(training_dataset_id, training_dataset_path): 
         client = dr.Client()
-        training_dataset_id = conf.get("training_dataset_id")
-        training_dataset_path = conf.get("training_data_path")
         if training_dataset_id is not None and training_dataset_path is not None:
             logger.info("when providing both training dataset id and training dataset path in config, it is assumed a new version should be registered.")
         elif training_dataset_id is None and training_dataset_path is None: 
@@ -121,14 +119,16 @@ async def register_dataset(conf):
             conf["training_dataset_id"] = training_dataset.id   
         elif training_dataset_id is not None and training_dataset_path is None:
             logger.info("training dataset id has been provided and will be used to set drift baselines for deployments")
+            conf["training_dataset_id"] = training_dataset_id
         elif training_dataset_id is not None and training_dataset_path is not None:
-            logger.info("training dataset id and trainign data path are present in conf, registering new version")
+            logger.info("training dataset id and trainign data path have been provided, registering new version")
             # purge_old_dataset_version(training_dataset_id)
+            conf["training_dataset_id"] = training_dataset_id 
             training_dataset = dr.Dataset.create_version_from_file(training_dataset_id, str(training_dataset_path))
         else:
             raise Exception("expection occured since neither training dataset nor training dataset id were provided.")
         return conf
-    return await asyncio.to_thread(_create)  
+    return await asyncio.to_thread(_create, training_dataset_id, training_dataset_path)  
 
 async def create_custom_model_version(conf):
     def _create():
@@ -241,7 +241,6 @@ async def register_custom_model(conf):
             )
 
         return await asyncio.to_thread(_create)
-
     while True:
         try:
             logger.info("registering model - this could take a while")
@@ -344,16 +343,28 @@ def parse_args():
         description=__doc__, usage='python %(prog)s'
     )
     parser.add_argument('--deployment-conf', help='path to deployment config yaml.  This must be provided.')
+    parser.add_argument('--training-dataset-id', help='prediction dataset id for dataset registered to datarobot', default = None)
+    parser.add_argument('--training-dataset-path', help='training dataset csv (includes target and feature).  Cannot be used with training-dataset-id', default=None)
+
     return parser.parse_args()
 
 async def main(): 
     args = parse_args()
-    model_confs_path = args.deployment_conf
-    with open(model_confs_path, "r") as f:
-        model_confs = yaml.load(f, Loader = yaml.SafeLoader)
+    deployment_confs_path = args.deployment_conf
+    training_dataset_path = args.training_dataset_path 
+    training_dataset_id = args.training_dataset_id
+
+    with open(deployment_confs_path, "r") as f:
+        master_conf = yaml.load(f, Loader = yaml.SafeLoader)
+
+    if isinstance(master_conf, dict):
+        model_confs = master_conf["deployments"]
+    elif isinstance(master_conf, list):
+        model_confs = master_conf
+    
     model_confs = [ validate_model_conf(conf) for conf in model_confs]
     model_confs = await asyncio.gather( *[drum_test(conf) for conf in model_confs])
-    model_confs = await asyncio.gather( *[register_dataset(conf) for conf in model_confs])
+    model_confs = await asyncio.gather( *[register_dataset(conf, training_dataset_id, training_dataset_path) for conf in model_confs])
     model_confs = await asyncio.gather( *[create_custom_model_version(conf) for conf in model_confs])
     model_confs = await asyncio.gather( *[build_custom_model_environment(conf) for conf in model_confs])
     model_confs = await asyncio.gather( *[wait_for_custom_model_environment(conf, build_info) for conf, build_info in model_confs])
@@ -361,7 +372,14 @@ async def main():
     model_confs = await asyncio.gather( *[wait_for_model_package_build(conf) for conf in model_confs])  
     model_confs = await asyncio.gather( *[create_deployment(conf) for conf in model_confs])   
     logger.info("success!!")  
-    write_model_confs(model_confs, model_confs_path)
+
+    if isinstance(master_conf, list):
+        final_out = {"deployments": model_confs}
+    else:
+        final_out = master_conf 
+        final_out["deployments"] = model_confs
+
+    write_model_confs(final_out, deployment_confs_path)
 
 if __name__ == "__main__":
     asyncio.run(main())
